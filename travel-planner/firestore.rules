@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if user is a collaborator
+    function isCollaborator(tripId) {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/trips/$(tripId)) &&
+        request.auth.token.email in get(/databases/$(database)/documents/trips/$(tripId)).data.collaborators;
+    }
+
+    // Trips collection
+    match /trips/{tripId} {
+      // Allow read if user is authenticated
+      allow read: if isAuthenticated();
+      
+      // Allow create if user is authenticated and includes themselves as a collaborator
+      allow create: if isAuthenticated() && 
+        request.auth.token.email in request.resource.data.collaborators;
+      
+      // Allow update/delete if user is authenticated and is a collaborator
+      allow update, delete: if isAuthenticated() && isCollaborator(tripId);
+
+      // Images subcollection
+      match /images/{destinationName} {
+        allow read, write: if isAuthenticated() && isCollaborator(tripId);
+      }
+
+      // Messages subcollection
+      match /messages/{messageId} {
+        allow read, write: if isAuthenticated() && isCollaborator(tripId);
+      }
+
+      // Activities subcollection
+      match /activities/{activityId} {
+        allow read, write: if isAuthenticated() && isCollaborator(tripId);
+      }
+    }
+
+    // Chat collection (separate from trips)
+    match /chat/{chatId} {
+      // Allow read/write if user is authenticated and is a collaborator of the associated trip
+      allow read, write: if isAuthenticated() && 
+        exists(/databases/$(database)/documents/trips/$(chatId)) &&
+        request.auth.token.email in get(/databases/$(database)/documents/trips/$(chatId)).data.collaborators;
+    }
+
+    // Home images collection
+    match /homeImages/{imageId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+  }
+} 
