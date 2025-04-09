@@ -1,14 +1,7 @@
 // src/context/ChatContext.jsx
 import { createContext, useContext, useEffect, useState } from "react";
-import { db } from "../services/firebase";
-import {
-  collection,
-  addDoc,
-  onSnapshot,
-  query,
-  orderBy,
-  serverTimestamp,
-} from "firebase/firestore";
+import { realtimeDb } from "../services/firebase";
+import { ref, push, onValue } from "firebase/database";
 import { useAuth } from "./AuthContext";
 
 const ChatContext = createContext();
@@ -25,17 +18,23 @@ export const ChatProvider = ({ children }) => {
       return;
     }
 
-    const messagesRef = collection(db, "chat");
-    const q = query(messagesRef, orderBy("timestamp", "asc"));
-
-    const unsubscribe = onSnapshot(
-      q,
+    const messagesRef = ref(realtimeDb, "chat");
+    const unsubscribe = onValue(
+      messagesRef,
       (snapshot) => {
-        const messageList = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setMessages(messageList);
+        const data = snapshot.val();
+        if (data) {
+          const messageList = Object.values(data)
+            .map((msg) => ({
+              sender: msg.userEmail,
+              text: msg.text,
+              timestamp: msg.timestamp,
+            }))
+            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+          setMessages(messageList);
+        } else {
+          setMessages([]);
+        }
       },
       (err) => {
         setError("Failed to fetch chat messages: " + err.message);
@@ -46,7 +45,7 @@ export const ChatProvider = ({ children }) => {
     return () => unsubscribe();
   }, [user, loading]);
 
-  const sendMessage = async (text) => {
+  const sendMessage = async (sender, text) => {
     if (!user) {
       setError("You must be logged in to send messages.");
       return;
@@ -58,11 +57,11 @@ export const ChatProvider = ({ children }) => {
 
     try {
       setError(null);
-      const messagesRef = collection(db, "chat");
-      await addDoc(messagesRef, {
-        userEmail: user.email,
+      const messagesRef = ref(realtimeDb, "chat");
+      await push(messagesRef, {
+        userEmail: sender,
         text: text.trim(),
-        timestamp: serverTimestamp(),
+        timestamp: new Date().toISOString(),
       });
     } catch (err) {
       setError("Failed to send message: " + err.message);

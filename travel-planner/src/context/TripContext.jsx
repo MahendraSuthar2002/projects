@@ -4,11 +4,10 @@ import { db } from "../services/firebase";
 import {
   collection,
   addDoc,
-  getDocs,
+  onSnapshot,
   doc,
   updateDoc,
   deleteDoc,
-  onSnapshot,
   query,
   where,
 } from "firebase/firestore";
@@ -19,21 +18,15 @@ const TripContext = createContext();
 export const TripProvider = ({ children }) => {
   const { user } = useAuth();
   const [trips, setTrips] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [filteredDestinations, setFilteredDestinations] = useState([]);
-  const [showWeather, setShowWeather] = useState(false);
-  const [showTraffic, setShowTraffic] = useState(false);
-  const [showPointsOfInterest, setShowPointsOfInterest] = useState(false);
 
-  // Fetch trips from Firestore
   useEffect(() => {
     if (!user) {
       setTrips([]);
-      setLoading(false);
       return;
     }
 
+    // Query trips where the user's email is in the collaborators array
     const tripsQuery = query(
       collection(db, "trips"),
       where("collaborators", "array-contains", user.email)
@@ -42,148 +35,76 @@ export const TripProvider = ({ children }) => {
     const unsubscribe = onSnapshot(
       tripsQuery,
       (snapshot) => {
-        const tripsData = snapshot.docs.map((doc) => ({
+        const userTrips = snapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
         }));
-        // Sort trips by createdAt in memory
-        tripsData.sort((a, b) => {
-          const dateA = a.createdAt?.toDate?.() || new Date(a.createdAt);
-          const dateB = b.createdAt?.toDate?.() || new Date(b.createdAt);
-          return dateB - dateA;
-        });
-        setTrips(tripsData);
-        setLoading(false);
+        setTrips(userTrips);
       },
-      (error) => {
-        console.error("Error fetching trips:", error);
-        setError("Failed to load trips. Please try again.");
-        setLoading(false);
+      (err) => {
+        setError("Failed to fetch trips.");
+        console.error("Trip fetch error:", err);
       }
     );
 
     return () => unsubscribe();
   }, [user]);
 
-  // Create a new trip
-  const createTrip = async (tripData) => {
+  const addTrip = async (trip) => {
+    if (!user) {
+      setError("You must be logged in to add a trip.");
+      return;
+    }
     try {
-      setLoading(true);
       setError(null);
-
-      const tripWithUser = {
-        ...tripData,
+      await addDoc(collection(db, "trips"), {
+        ...trip,
         collaborators: [user.email],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      const docRef = await addDoc(collection(db, "trips"), tripWithUser);
-      return { id: docRef.id, ...tripWithUser };
-    } catch (error) {
-      console.error("Error creating trip:", error);
-      setError("Failed to create trip. Please try again.");
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Update an existing trip
-  const updateTrip = async (tripId, tripData) => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const tripRef = doc(db, "trips", tripId);
-      await updateDoc(tripRef, {
-        ...tripData,
-        updatedAt: new Date(),
+        createdAt: new Date().toISOString(),
       });
-
-      return { id: tripId, ...tripData };
-    } catch (error) {
-      console.error("Error updating trip:", error);
-      setError("Failed to update trip. Please try again.");
-      throw error;
-    } finally {
-      setLoading(false);
+    } catch (err) {
+      setError("Failed to add trip.");
+      console.error("Add trip error:", err);
     }
   };
 
-  // Delete a trip
+  const updateTrip = async (tripId, updatedTrip) => {
+    if (!user) {
+      setError("You must be logged in to update a trip.");
+      return;
+    }
+    try {
+      setError(null);
+      const tripRef = doc(db, "trips", tripId);
+      await updateDoc(tripRef, updatedTrip);
+    } catch (err) {
+      setError("Failed to update trip.");
+      console.error("Update trip error:", err);
+    }
+  };
+
   const deleteTrip = async (tripId) => {
+    if (!user) {
+      setError("You must be logged in to delete a trip.");
+      return;
+    }
     try {
-      setLoading(true);
       setError(null);
-
-      await deleteDoc(doc(db, "trips", tripId));
-    } catch (error) {
-      console.error("Error deleting trip:", error);
-      setError("Failed to delete trip. Please try again.");
-      throw error;
-    } finally {
-      setLoading(false);
+      const tripRef = doc(db, "trips", tripId);
+      await deleteDoc(tripRef);
+    } catch (err) {
+      setError("Failed to delete trip.");
+      console.error("Delete trip error:", err);
     }
   };
 
-  // Get a single trip by ID
-  const getTripById = async (tripId) => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const tripDoc = await getDocs(doc(db, "trips", tripId));
-      if (!tripDoc.exists()) {
-        throw new Error("Trip not found");
-      }
-
-      return { id: tripDoc.id, ...tripDoc.data() };
-    } catch (error) {
-      console.error("Error fetching trip:", error);
-      setError("Failed to load trip. Please try again.");
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Update filtered destinations
-  const updateFilteredDestinations = (newDestinations) => {
-    setFilteredDestinations(newDestinations);
-  };
-
-  // Clear filtered destinations
-  const clearFilteredDestinations = () => {
-    setFilteredDestinations([]);
-  };
-
-  const value = {
-    trips,
-    loading,
-    error,
-    createTrip,
-    updateTrip,
-    deleteTrip,
-    getTripById,
-    filteredDestinations,
-    updateFilteredDestinations,
-    clearFilteredDestinations,
-    showWeather,
-    setShowWeather,
-    showTraffic,
-    setShowTraffic,
-    showPointsOfInterest,
-    setShowPointsOfInterest,
-  };
-
-  return <TripContext.Provider value={value}>{children}</TripContext.Provider>;
+  return (
+    <TripContext.Provider
+      value={{ trips, addTrip, updateTrip, deleteTrip, error }}
+    >
+      {children}
+    </TripContext.Provider>
+  );
 };
 
-export const useTrip = () => {
-  const context = useContext(TripContext);
-  if (!context) {
-    throw new Error("useTrip must be used within a TripProvider");
-  }
-  return context;
-};
+export const useTrip = () => useContext(TripContext);
